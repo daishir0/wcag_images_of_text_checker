@@ -18,7 +18,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 class WCAGImagesOfTextChecker:
-    def __init__(self, config_path: str = 'config.yaml', max_images: int = 10):
+    def __init__(self, config_path: str = 'config.yaml', max_images: int = None):
         """初期化"""
         logger.info("WCAGImagesOfTextCheckerを初期化中...")
         self.config = self.load_config(config_path)
@@ -72,99 +72,177 @@ class WCAGImagesOfTextChecker:
             logger.error(f"XPATH生成エラー: {str(e)}")
             return "xpath_error"
 
-    def analyze_image(self, image_url: str, count: int, total: int) -> Dict:
+    def analyze_image(self, image_url: str, count: int, total: int, max_retries: int = 3) -> Dict:
         """Vision APIを使用して画像を分析"""
         logger.info(f"画像を分析中 ({count}/{total}): {image_url}")
-        try:
-            response = self.client.chat.completions.create(
-                model=self.config['openai']['model'],
-                messages=[
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": """
-                                この画像をWCAG 1.4.5（Images of Text）の観点から詳細に分析し、以下の形式でJSON応答してください：
-                                {
-                                    "contains_text": true/false,
-                                    "detected_text": "検出されたテキスト",
-                                    "text_purpose": "テキストの目的（ロゴ、ナビゲーション、見出し、本文など）",
-                                    "has_significant_visual_content": true/false,
-                                    "visual_content_description": "重要な視覚的コンテンツの説明（存在する場合）",
-                                    "is_logo": true/false,
-                                    "is_essential": true/false,
-                                    "essential_reason": "本質的と判断した理由（is_essentialがtrueの場合）",
-                                    "is_customizable": true/false,
-                                    "can_be_html_css": true/false,
-                                    "has_text_alternative": true/false,
-                                    "wcag_145_compliant": true/false,
-                                    "reason": "準拠/非準拠の詳細な理由",
-                                    "recommendations": ["改善提案1", "改善提案2"]
-                                }
-                                
-                                判断基準：
-                                1. has_significant_visual_content:
-                                   - グラフ、スクリーンショット、図表など、テキスト以外の重要な視覚的情報を含むか
-                                   - 含む場合、そのコンテンツの説明を提供
-
-                                2. is_logo:
-                                   - 企業・組織のロゴまたはブランド名の一部か
-                                   - ブランドアイデンティティとして不可欠な表現か
-
-                                3. is_essential:
-                                   - フォントサンプル、歴史的文書の表現など、特定の表示が情報伝達に不可欠か
-                                   - 「B」（太字）、「I」（斜体）などのシンボリックな表現か
-                                   - なぜその表現が本質的なのか、理由を説明
-
-                                4. is_customizable:
-                                   - ユーザーがフォントサイズ、色、間隔などをカスタマイズできるか
-                                   - カスタマイズ可能な場合、その方法を説明
-
-                                5. has_text_alternative:
-                                   - 同じ情報がテキストでも提供されているか
-                                   - テキストと画像が併用されている場合、基準を満たす
-
-                                6. wcag_145_compliant: 以下のいずれかを満たすか
-                                   - ロゴ/ブランド名である
-                                   - カスタマイズ可能である
-                                   - 特定の表現が本質的である
-                                   - テキストで同じ情報が提供されている
-                                   - 重要な他の視覚的コンテンツの一部である
-                                """
-                            },
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": image_url
-                                }
-                            }
-                        ]
-                    }
-                ],
-                max_tokens=4000
-            )
-            
-            content = response.choices[0].message.content.strip()
+        
+        for retry in range(max_retries):
             try:
-                start = content.find('{')
-                end = content.rfind('}') + 1
-                if start >= 0 and end > start:
-                    json_str = content[start:end]
-                    result = json.loads(json_str)
+                if retry > 0:
+                    logger.info(f"リトライ {retry}/{max_retries-1} ({count}/{total}): {image_url}")
+                
+                response = self.client.chat.completions.create(
+                    model=self.config['openai']['model'],
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": """
+                                    この画像をWCAG 1.4.5（Images of Text）の観点から詳細に分析し、以下の形式でJSON応答してください：
+                                    {
+                                        "contains_text": true/false,
+                                        "detected_text": "検出されたテキスト",
+                                        "text_purpose": "テキストの目的（ロゴ、ナビゲーション、見出し、本文など）",
+                                        "has_significant_visual_content": true/false,
+                                        "visual_content_description": "重要な視覚的コンテンツの説明（存在する場合）",
+                                        "is_logo": true/false,
+                                        "is_essential": true/false,
+                                        "essential_reason": "本質的と判断した理由（is_essentialがtrueの場合）",
+                                        "is_customizable": true/false,
+                                        "can_be_html_css": true/false,
+                                        "has_text_alternative": true/false,
+                                        "wcag_145_compliant": true/false,
+                                        "reason": "準拠/非準拠の詳細な理由",
+                                        "recommendations": ["改善提案1", "改善提案2"]
+                                    }
+                                    
+                                    判断基準：
+                                    1. has_significant_visual_content:
+                                       - グラフ、スクリーンショット、図表など、テキスト以外の重要な視覚的情報を含むか
+                                       - 含む場合、そのコンテンツの説明を提供
+
+                                    2. is_logo:
+                                       - 企業・組織のロゴまたはブランド名の一部か
+                                       - ブランドアイデンティティとして不可欠な表現か
+
+                                    3. is_essential:
+                                       - フォントサンプル、歴史的文書の表現など、特定の表示が情報伝達に不可欠か
+                                       - 「B」（太字）、「I」（斜体）などのシンボリックな表現か
+                                       - なぜその表現が本質的なのか、理由を説明
+
+                                    4. is_customizable:
+                                       - ユーザーがフォントサイズ、色、間隔などをカスタマイズできるか
+                                       - カスタマイズ可能な場合、その方法を説明
+
+                                    5. has_text_alternative:
+                                       - 同じ情報がテキストでも提供されているか
+                                       - テキストと画像が併用されている場合、基準を満たす
+
+                                    6. wcag_145_compliant: 以下のいずれかを満たすか
+                                       - ロゴ/ブランド名である
+                                       - カスタマイズ可能である
+                                       - 特定の表現が本質的である
+                                       - テキストで同じ情報が提供されている
+                                       - 重要な他の視覚的コンテンツの一部である
+                                    
+                                    必ず有効なJSONフォーマットで回答してください。
+                                    """
+                                },
+                                {
+                                    "type": "image_url",
+                                    "image_url": {
+                                        "url": image_url
+                                    }
+                                }
+                            ]
+                        }
+                    ],
+                    max_tokens=4000
+                )
+                
+                content = response.choices[0].message.content.strip()
+                
+                # JSONの抽出を改善
+                try:
+                    # 方法1: 最初の { から最後の } までを抽出
+                    start = content.find('{')
+                    end = content.rfind('}') + 1
+                    
+                    if start >= 0 and end > start:
+                        json_str = content[start:end]
+                        try:
+                            result = json.loads(json_str)
+                            logger.info(f"画像分析が完了 ({count}/{total})")
+                            return result
+                        except json.JSONDecodeError:
+                            # 最初の方法が失敗した場合、別の方法を試す
+                            pass
+                    
+                    # 方法2: 正規表現でJSONを抽出
+                    import re
+                    json_pattern = re.compile(r'(\{.*\})', re.DOTALL)
+                    match = json_pattern.search(content)
+                    
+                    if match:
+                        json_str = match.group(1)
+                        try:
+                            result = json.loads(json_str)
+                            logger.info(f"画像分析が完了 ({count}/{total}) - 正規表現で抽出")
+                            return result
+                        except json.JSONDecodeError:
+                            # 両方の方法が失敗した場合
+                            pass
+                    
+                    # 方法3: 行ごとに処理して { で始まり } で終わる部分を見つける
+                    lines = content.split('\n')
+                    json_lines = []
+                    in_json = False
+                    
+                    for line in lines:
+                        line = line.strip()
+                        if not in_json and '{' in line:
+                            in_json = True
+                            json_lines.append(line[line.find('{'):])
+                        elif in_json and '}' in line:
+                            json_lines.append(line[:line.rfind('}')+1])
+                            in_json = False
+                            break
+                        elif in_json:
+                            json_lines.append(line)
+                    
+                    if json_lines:
+                        json_str = ''.join(json_lines)
+                        try:
+                            result = json.loads(json_str)
+                            logger.info(f"画像分析が完了 ({count}/{total}) - 行分割で抽出")
+                            return result
+                        except json.JSONDecodeError:
+                            # すべての方法が失敗した場合
+                            if retry < max_retries - 1:
+                                logger.warning(f"JSON抽出に失敗、リトライします ({count}/{total})")
+                                continue
+                            else:
+                                logger.error(f"JSON解析エラー ({count}/{total}): JSONを抽出できませんでした\nResponse: {content}")
+                                return self._create_error_response(f"JSON解析エラー: JSONを抽出できませんでした")
+                    
+                    # すべての抽出方法が失敗した場合
+                    if retry < max_retries - 1:
+                        logger.warning(f"JSON not found in response、リトライします ({count}/{total})")
+                        continue
+                    else:
+                        logger.error(f"JSON not found in response ({count}/{total})\nResponse: {content}")
+                        return self._create_error_response("JSON not found in response")
+                    
+                except Exception as e:
+                    if retry < max_retries - 1:
+                        logger.warning(f"JSON処理中にエラー、リトライします ({count}/{total}): {str(e)}")
+                        continue
+                    else:
+                        logger.error(f"JSON処理中にエラー ({count}/{total}): {str(e)}\nResponse: {content}")
+                        return self._create_error_response(f"JSON処理エラー: {str(e)}")
+                    
+            except Exception as e:
+                if retry < max_retries - 1:
+                    logger.warning(f"API呼び出しエラー、リトライします ({count}/{total}): {str(e)}")
+                    continue
                 else:
-                    raise ValueError("JSON not found in response")
-                
-                logger.info(f"画像分析が完了 ({count}/{total})")
-                return result
-                
-            except json.JSONDecodeError as e:
-                logger.error(f"JSON解析エラー ({count}/{total}): {str(e)}\nResponse: {content}")
-                return self._create_error_response(f"JSON解析エラー: {str(e)}")
-                
-        except Exception as e:
-            logger.error(f"画像分析中にエラーが発生 ({count}/{total}): {str(e)}")
-            return self._create_error_response(f"画像分析エラー: {str(e)}")
+                    logger.error(f"画像分析中にエラーが発生 ({count}/{total}): {str(e)}")
+                    return self._create_error_response(f"画像分析エラー: {str(e)}")
+        
+        # すべてのリトライが失敗した場合
+        return self._create_error_response("最大リトライ回数を超えました")
 
     def _create_error_response(self, error_message: str) -> Dict:
         """エラーレスポンスを生成"""
@@ -260,11 +338,11 @@ class WCAGImagesOfTextChecker:
                 elif not any(i.get('src') == img.get('src') for i in images):
                     images.append(img)
             
-            total_images = min(len(images), self.max_images)
-            logger.info(f"画像要素を {len(images)} 個検出（処理上限: {self.max_images}個）")
+            total_images = len(images) if self.max_images is None else min(len(images), self.max_images)
+            logger.info(f"画像要素を {len(images)} 個検出" + (f"（処理上限: {self.max_images}個）" if self.max_images is not None else ""))
             
             # 各画像をチェック
-            for i, img in enumerate(images[:self.max_images], 1):
+            for i, img in enumerate(images if self.max_images is None else images[:self.max_images], 1):
                 result = self.check_image(img, url, i, total_images)
                 if result:
                     self.results.append(result)
@@ -332,7 +410,7 @@ class WCAGImagesOfTextChecker:
                         
             print("-" * 80)
 
-def check_wcag_1_4_5(url: str, config_path: str = 'config.yaml', max_images: int = 10):
+def check_wcag_1_4_5(url: str, config_path: str = 'config.yaml', max_images: int = None):
     """WCAG 1.4.5チェックを実行"""
     logger.info(f"WCAG 1.4.5チェックを開始: {url}")
     checker = WCAGImagesOfTextChecker(config_path, max_images)
