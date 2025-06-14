@@ -40,7 +40,9 @@ python -m wcag_images_of_text_checker.main https://example.com --max-images 20 -
 import sys
 import logging
 import asyncio
-from .wcag_checker import WCAGImagesOfTextChecker
+
+# 内部からの実行のみをサポート
+from wcag_checker import WCAGImagesOfTextChecker
 
 # ロガーの設定
 logging.basicConfig(

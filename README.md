@@ -29,7 +29,7 @@ pip install -r requirements.txt
 ## Usage
 1. Run the checker with a URL:
 ```bash
-python -m wcag_images_of_text_checker.main <URL> [options]
+python main.py <URL> [options]
 ```
 
 ### Command Line Options
@@ -39,26 +39,6 @@ python -m wcag_images_of_text_checker.main <URL> [options]
 - `--config <file_path>`: Specify a custom configuration file path
 
 ### Examples
-
-#### When running from outside the package directory:
-```bash
-# Basic usage
-python -m wcag_images_of_text_checker.main https://example.com
-
-# Process maximum 5 images
-python -m wcag_images_of_text_checker.main https://example.com --max-images 5
-
-# Set batch size to 3
-python -m wcag_images_of_text_checker.main https://example.com --batch-size 3
-
-# Disable caching
-python -m wcag_images_of_text_checker.main https://example.com --no-cache
-
-# Combine multiple options
-python -m wcag_images_of_text_checker.main https://example.com --max-images 20 --batch-size 5 --no-cache
-```
-
-#### When running from inside the package directory:
 ```bash
 # Basic usage
 python main.py https://example.com
@@ -74,9 +54,6 @@ python main.py https://example.com --no-cache
 
 # Combine multiple options
 python main.py https://example.com --max-images 20 --batch-size 5 --no-cache
-
-# Alternative: Run as a module
-python -m main https://example.com
 ```
 
 ### Example Output
@@ -197,7 +174,7 @@ pip install -r requirements.txt
 ## 使い方
 1. URLを指定してチェッカーを実行:
 ```bash
-python -m wcag_images_of_text_checker.main <URL> [オプション]
+python main.py <URL> [オプション]
 ```
 
 ### コマンドラインオプション
@@ -207,26 +184,6 @@ python -m wcag_images_of_text_checker.main <URL> [オプション]
 - `--config <ファイルパス>`: カスタム設定ファイルのパスを指定
 
 ### 実行例
-
-#### パッケージディレクトリの外から実行する場合:
-```bash
-# 基本的な使用方法
-python -m wcag_images_of_text_checker.main https://example.com
-
-# 最大5枚の画像を処理
-python -m wcag_images_of_text_checker.main https://example.com --max-images 5
-
-# バッチサイズを3に設定
-python -m wcag_images_of_text_checker.main https://example.com --batch-size 3
-
-# キャッシュを無効化
-python -m wcag_images_of_text_checker.main https://example.com --no-cache
-
-# 複数のオプションを組み合わせ
-python -m wcag_images_of_text_checker.main https://example.com --max-images 20 --batch-size 5 --no-cache
-```
-
-#### パッケージディレクトリ内から実行する場合:
 ```bash
 # 基本的な使用方法
 python main.py https://example.com
@@ -242,9 +199,6 @@ python main.py https://example.com --no-cache
 
 # 複数のオプションを組み合わせ
 python main.py https://example.com --max-images 20 --batch-size 5 --no-cache
-
-# 代替方法: モジュールとして実行
-python -m main https://example.com
 ```
 
 ### 実行例

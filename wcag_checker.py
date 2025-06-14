@@ -45,9 +45,10 @@ import asyncio
 from typing import List, Dict, Optional, Set, Any, Tuple
 from bs4 import BeautifulSoup
 
-from .utils.cache_manager import CacheManager
-from .utils.image_analyzer import ImageAnalyzer
-from .utils.html_processor import HTMLProcessor
+# 内部からの実行のみをサポート
+from utils.cache_manager import CacheManager
+from utils.image_analyzer import ImageAnalyzer
+from utils.html_processor import HTMLProcessor
 
 # ロガーの設定
 logging.basicConfig(
