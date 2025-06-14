@@ -5,9 +5,13 @@ import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse
 from openai import OpenAI
-from typing import List, Dict, Optional, Set
+from typing import List, Dict, Optional, Set, Any
 import json
 import logging
+import hashlib
+import time
+from datetime import datetime, timedelta
+import re
 
 # ロガーの設定
 logging.basicConfig(
@@ -17,8 +21,279 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+class CacheManager:
+    def __init__(self, cache_dir='cache', cache_expiry_days=7):
+        """キャッシュマネージャーの初期化"""
+        self.cache_dir = cache_dir
+        self.html_cache_dir = os.path.join(cache_dir, 'html')
+        self.images_cache_dir = os.path.join(cache_dir, 'images')
+        self.analysis_cache_dir = os.path.join(cache_dir, 'analysis')
+        self.metadata_file = os.path.join(cache_dir, 'metadata.json')
+        self.cache_expiry = timedelta(days=cache_expiry_days)
+        
+        # キャッシュディレクトリの作成
+        os.makedirs(self.html_cache_dir, exist_ok=True)
+        os.makedirs(self.images_cache_dir, exist_ok=True)
+        os.makedirs(self.analysis_cache_dir, exist_ok=True)
+        
+        # メタデータの読み込み
+        self.metadata = self._load_metadata()
+    
+    def _load_metadata(self):
+        """メタデータの読み込み"""
+        if os.path.exists(self.metadata_file):
+            try:
+                with open(self.metadata_file, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            except Exception as e:
+                logger.error(f"メタデータの読み込みに失敗しました: {str(e)}")
+                return {}
+        return {}
+    
+    def _save_metadata(self):
+        """メタデータの保存"""
+        try:
+            with open(self.metadata_file, 'w', encoding='utf-8') as f:
+                json.dump(self.metadata, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.error(f"メタデータの保存に失敗しました: {str(e)}")
+    
+    def _get_url_hash(self, url):
+        """URLからハッシュ値を生成"""
+        return hashlib.md5(url.encode('utf-8')).hexdigest()
+    
+    def _get_image_hash(self, image_url):
+        """画像URLからハッシュ値を生成"""
+        return hashlib.md5(image_url.encode('utf-8')).hexdigest()
+    
+    def is_html_cached(self, url):
+        """URLのHTMLがキャッシュされているか確認"""
+        url_hash = self._get_url_hash(url)
+        
+        # メタデータに存在するか確認
+        if url_hash not in self.metadata:
+            return False
+        
+        # キャッシュファイルが存在するか確認
+        html_cache_path = os.path.join(self.html_cache_dir, f"{url_hash}.html")
+        
+        if not os.path.exists(html_cache_path):
+            return False
+        
+        # キャッシュの有効期限を確認
+        cache_time = datetime.fromisoformat(self.metadata[url_hash]['timestamp'])
+        if datetime.now() - cache_time > self.cache_expiry:
+            logger.info(f"HTMLキャッシュの有効期限切れ: {url}")
+            return False
+        
+        return True
+    
+    def is_images_cached(self, url):
+        """URLの画像リストがキャッシュされているか確認"""
+        url_hash = self._get_url_hash(url)
+        
+        # メタデータに存在するか確認
+        if url_hash not in self.metadata:
+            return False
+        
+        # キャッシュファイルが存在するか確認
+        images_cache_path = os.path.join(self.images_cache_dir, f"{url_hash}.json")
+        
+        if not os.path.exists(images_cache_path):
+            return False
+        
+        # キャッシュの有効期限を確認
+        cache_time = datetime.fromisoformat(self.metadata[url_hash]['timestamp'])
+        if datetime.now() - cache_time > self.cache_expiry:
+            logger.info(f"画像リストキャッシュの有効期限切れ: {url}")
+            return False
+        
+        return True
+    
+    def is_analysis_cached(self, image_url):
+        """画像分析結果がキャッシュされているか確認"""
+        image_hash = self._get_image_hash(image_url)
+        
+        # メタデータに存在するか確認
+        key = f"analysis_{image_hash}"
+        if key not in self.metadata:
+            return False
+        
+        # キャッシュファイルが存在するか確認
+        analysis_cache_path = os.path.join(self.analysis_cache_dir, f"{image_hash}.json")
+        
+        if not os.path.exists(analysis_cache_path):
+            return False
+        
+        # キャッシュの有効期限を確認
+        cache_time = datetime.fromisoformat(self.metadata[key]['timestamp'])
+        if datetime.now() - cache_time > self.cache_expiry:
+            logger.info(f"分析結果キャッシュの有効期限切れ: {image_url}")
+            return False
+        
+        return True
+    
+    def cache_html(self, url, html_content):
+        """HTMLコンテンツをキャッシュ"""
+        url_hash = self._get_url_hash(url)
+        html_cache_path = os.path.join(self.html_cache_dir, f"{url_hash}.html")
+        
+        try:
+            with open(html_cache_path, 'w', encoding='utf-8') as f:
+                f.write(html_content)
+            
+            # メタデータを更新
+            self.metadata[url_hash] = {
+                'url': url,
+                'timestamp': datetime.now().isoformat(),
+                'type': 'html'
+            }
+            self._save_metadata()
+            
+            logger.info(f"HTMLをキャッシュしました: {url}")
+            return True
+        except Exception as e:
+            logger.error(f"HTMLのキャッシュに失敗しました: {str(e)}")
+            return False
+    
+    def cache_images(self, url, images_data):
+        """画像要素リストをキャッシュ"""
+        url_hash = self._get_url_hash(url)
+        images_cache_path = os.path.join(self.images_cache_dir, f"{url_hash}.json")
+        
+        try:
+            with open(images_cache_path, 'w', encoding='utf-8') as f:
+                json.dump(images_data, f, ensure_ascii=False, indent=2)
+            
+            # メタデータを更新（既に存在する場合は上書き）
+            if url_hash in self.metadata:
+                self.metadata[url_hash]['timestamp'] = datetime.now().isoformat()
+            else:
+                self.metadata[url_hash] = {
+                    'url': url,
+                    'timestamp': datetime.now().isoformat(),
+                    'type': 'images'
+                }
+            self._save_metadata()
+            
+            logger.info(f"画像リストをキャッシュしました: {url}")
+            return True
+        except Exception as e:
+            logger.error(f"画像リストのキャッシュに失敗しました: {str(e)}")
+            return False
+    
+    def cache_analysis(self, image_url, analysis_data):
+        """画像分析結果をキャッシュ"""
+        image_hash = self._get_image_hash(image_url)
+        analysis_cache_path = os.path.join(self.analysis_cache_dir, f"{image_hash}.json")
+        
+        try:
+            with open(analysis_cache_path, 'w', encoding='utf-8') as f:
+                json.dump(analysis_data, f, ensure_ascii=False, indent=2)
+            
+            # メタデータを更新
+            key = f"analysis_{image_hash}"
+            self.metadata[key] = {
+                'url': image_url,
+                'timestamp': datetime.now().isoformat(),
+                'type': 'analysis'
+            }
+            self._save_metadata()
+            
+            logger.info(f"分析結果をキャッシュしました: {image_url}")
+            return True
+        except Exception as e:
+            logger.error(f"分析結果のキャッシュに失敗しました: {str(e)}")
+            return False
+    
+    def get_html(self, url):
+        """キャッシュからHTMLを取得"""
+        if not self.is_html_cached(url):
+            return None
+        
+        url_hash = self._get_url_hash(url)
+        html_cache_path = os.path.join(self.html_cache_dir, f"{url_hash}.html")
+        
+        try:
+            with open(html_cache_path, 'r', encoding='utf-8') as f:
+                html_content = f.read()
+            
+            logger.info(f"キャッシュからHTMLを読み込みました: {url}")
+            return html_content
+        except Exception as e:
+            logger.error(f"キャッシュからのHTML読み込みに失敗しました: {str(e)}")
+            return None
+    
+    def get_images(self, url):
+        """キャッシュから画像リストを取得"""
+        if not self.is_images_cached(url):
+            return None
+        
+        url_hash = self._get_url_hash(url)
+        images_cache_path = os.path.join(self.images_cache_dir, f"{url_hash}.json")
+        
+        try:
+            with open(images_cache_path, 'r', encoding='utf-8') as f:
+                images_data = json.load(f)
+            
+            logger.info(f"キャッシュから画像リストを読み込みました: {url}")
+            return images_data
+        except Exception as e:
+            logger.error(f"キャッシュからの画像リスト読み込みに失敗しました: {str(e)}")
+            return None
+    
+    def get_analysis(self, image_url):
+        """キャッシュから画像分析結果を取得"""
+        if not self.is_analysis_cached(image_url):
+            return None
+        
+        image_hash = self._get_image_hash(image_url)
+        analysis_cache_path = os.path.join(self.analysis_cache_dir, f"{image_hash}.json")
+        
+        try:
+            with open(analysis_cache_path, 'r', encoding='utf-8') as f:
+                analysis_data = json.load(f)
+            
+            logger.info(f"キャッシュから分析結果を読み込みました: {image_url}")
+            return analysis_data
+        except Exception as e:
+            logger.error(f"キャッシュからの分析結果読み込みに失敗しました: {str(e)}")
+            return None
+    
+    def clear_cache(self, url=None):
+        """キャッシュをクリア"""
+        if url:
+            # 特定のURLのキャッシュをクリア
+            url_hash = self._get_url_hash(url)
+            html_cache_path = os.path.join(self.html_cache_dir, f"{url_hash}.html")
+            images_cache_path = os.path.join(self.images_cache_dir, f"{url_hash}.json")
+            
+            if os.path.exists(html_cache_path):
+                os.remove(html_cache_path)
+            if os.path.exists(images_cache_path):
+                os.remove(images_cache_path)
+            
+            if url_hash in self.metadata:
+                del self.metadata[url_hash]
+                self._save_metadata()
+            
+            logger.info(f"キャッシュをクリアしました: {url}")
+        else:
+            # すべてのキャッシュをクリア
+            for filename in os.listdir(self.html_cache_dir):
+                os.remove(os.path.join(self.html_cache_dir, filename))
+            for filename in os.listdir(self.images_cache_dir):
+                os.remove(os.path.join(self.images_cache_dir, filename))
+            for filename in os.listdir(self.analysis_cache_dir):
+                os.remove(os.path.join(self.analysis_cache_dir, filename))
+            
+            self.metadata = {}
+            self._save_metadata()
+            
+            logger.info("すべてのキャッシュをクリアしました")
+
 class WCAGImagesOfTextChecker:
-    def __init__(self, config_path: str = 'config.yaml', max_images: int = None):
+    def __init__(self, config_path: str = 'config.yaml', max_images: int = None, use_cache: bool = True):
         """初期化"""
         logger.info("WCAGImagesOfTextCheckerを初期化中...")
         self.config = self.load_config(config_path)
@@ -27,6 +302,14 @@ class WCAGImagesOfTextChecker:
         self.checked_urls = set()
         self.checked_images = set()  # 重複チェック防止用
         self.max_images = max_images
+        self.use_cache = use_cache
+        
+        # キャッシュマネージャーの初期化
+        if self.use_cache:
+            cache_dir = self.config.get('cache', {}).get('directory', 'cache')
+            cache_expiry = self.config.get('cache', {}).get('expiry_days', 7)
+            self.cache_manager = CacheManager(cache_dir, cache_expiry)
+        
         logger.info("初期化完了")
 
     def load_config(self, config_path: str) -> dict:
@@ -34,6 +317,15 @@ class WCAGImagesOfTextChecker:
         logger.info(f"設定ファイルを読み込み中: {config_path}")
         with open(config_path, 'r') as f:
             config = yaml.safe_load(f)
+            
+        # キャッシュ設定がなければデフォルト値を設定
+        if 'cache' not in config:
+            config['cache'] = {
+                'enabled': True,
+                'directory': 'cache',
+                'expiry_days': 7
+            }
+            
         logger.info("設定ファイルの読み込みが完了")
         return config
 
@@ -73,7 +365,14 @@ class WCAGImagesOfTextChecker:
             return "xpath_error"
 
     def analyze_image(self, image_url: str, count: int, total: int, max_retries: int = 3) -> Dict:
-        """Vision APIを使用して画像を分析"""
+        """Vision APIを使用して画像を分析（キャッシュ対応）"""
+        # キャッシュが有効で、画像分析結果がキャッシュされている場合
+        if self.use_cache and self.cache_manager.is_analysis_cached(image_url):
+            logger.info(f"キャッシュから分析結果を使用 ({count}/{total}): {image_url}")
+            cached_analysis = self.cache_manager.get_analysis(image_url)
+            if cached_analysis:
+                return cached_analysis
+        
         logger.info(f"画像を分析中 ({count}/{total}): {image_url}")
         
         for retry in range(max_retries):
@@ -165,13 +464,17 @@ class WCAGImagesOfTextChecker:
                         try:
                             result = json.loads(json_str)
                             logger.info(f"画像分析が完了 ({count}/{total})")
+                            
+                            # キャッシュが有効な場合は分析結果をキャッシュ
+                            if self.use_cache:
+                                self.cache_manager.cache_analysis(image_url, result)
+                                
                             return result
                         except json.JSONDecodeError:
                             # 最初の方法が失敗した場合、別の方法を試す
                             pass
                     
                     # 方法2: 正規表現でJSONを抽出
-                    import re
                     json_pattern = re.compile(r'(\{.*\})', re.DOTALL)
                     match = json_pattern.search(content)
                     
@@ -180,6 +483,11 @@ class WCAGImagesOfTextChecker:
                         try:
                             result = json.loads(json_str)
                             logger.info(f"画像分析が完了 ({count}/{total}) - 正規表現で抽出")
+                            
+                            # キャッシュが有効な場合は分析結果をキャッシュ
+                            if self.use_cache:
+                                self.cache_manager.cache_analysis(image_url, result)
+                                
                             return result
                         except json.JSONDecodeError:
                             # 両方の方法が失敗した場合
@@ -207,6 +515,11 @@ class WCAGImagesOfTextChecker:
                         try:
                             result = json.loads(json_str)
                             logger.info(f"画像分析が完了 ({count}/{total}) - 行分割で抽出")
+                            
+                            # キャッシュが有効な場合は分析結果をキャッシュ
+                            if self.use_cache:
+                                self.cache_manager.cache_analysis(image_url, result)
+                                
                             return result
                         except json.JSONDecodeError:
                             # すべての方法が失敗した場合
@@ -269,8 +582,61 @@ class WCAGImagesOfTextChecker:
             return url
         return urljoin(base_url, url)
 
+    def fetch_page_content(self, url: str) -> BeautifulSoup:
+        """URLにアクセスしてHTMLを取得・パース（キャッシュ対応）"""
+        # キャッシュが有効で、URLがキャッシュされている場合
+        if self.use_cache and self.cache_manager.is_html_cached(url):
+            logger.info(f"キャッシュからHTMLを使用: {url}")
+            html_content = self.cache_manager.get_html(url)
+            if html_content:
+                return BeautifulSoup(html_content, 'html.parser')
+        
+        # キャッシュがない場合は通常通りアクセス
+        logger.info(f"URLにアクセス中: {url}")
+        response = requests.get(url)
+        response.raise_for_status()
+        response.encoding = 'utf-8'
+        
+        # キャッシュが有効な場合はHTMLをキャッシュ
+        if self.use_cache:
+            self.cache_manager.cache_html(url, response.text)
+        
+        return BeautifulSoup(response.text, 'html.parser')
+
+    def extract_images(self, url: str, soup: BeautifulSoup) -> List[Any]:
+        """画像要素を抽出（キャッシュ対応）"""
+        # キャッシュが有効で、URLがキャッシュされている場合
+        if self.use_cache and self.cache_manager.is_images_cached(url):
+            logger.info(f"キャッシュから画像リストを使用: {url}")
+            images_data = self.cache_manager.get_images(url)
+            if images_data:
+                # 画像データをBeautifulSoup要素に変換
+                images = []
+                for img_data in images_data:
+                    img_element = BeautifulSoup(img_data, 'html.parser').find('img')
+                    if img_element:
+                        images.append(img_element)
+                
+                return images
+        
+        # キャッシュがない場合は通常通り抽出
+        images = []
+        for img in soup.find_all('img'):
+            if img.parent.name != 'picture':
+                images.append(img)
+            elif not any(i.get('src') == img.get('src') for i in images):
+                images.append(img)
+        
+        # キャッシュが有効な場合は画像リストをキャッシュ
+        if self.use_cache:
+            # BeautifulSoup要素をシリアライズ可能な形式に変換
+            images_data = [str(img) for img in images]
+            self.cache_manager.cache_images(url, images_data)
+        
+        return images
+
     def check_image(self, img: BeautifulSoup, base_url: str, count: int, total: int) -> Optional[Dict]:
-        """画像要素をチェック"""
+        """画像要素をチェック（キャッシュ対応）"""
         try:
             src = img.get('src')
             if not src:
@@ -289,7 +655,7 @@ class WCAGImagesOfTextChecker:
             alt = img.get('alt', '')
             xpath = self.get_xpath(img)
             
-            # Vision APIで画像を分析
+            # Vision APIで画像を分析（キャッシュ対応）
             analysis = self.analyze_image(image_url, count, total)
             
             if "error" in analysis:
@@ -317,31 +683,23 @@ class WCAGImagesOfTextChecker:
             return None
 
     def check_url(self, url: str):
-        """URLをチェック"""
+        """URLをチェック（キャッシュ対応）"""
         if url in self.checked_urls:
             logger.info(f"URLは既にチェック済み: {url}")
             return
         self.checked_urls.add(url)
         
         try:
-            logger.info(f"URLにアクセス中: {url}")
-            response = requests.get(url)
-            response.raise_for_status()
-            response.encoding = 'utf-8'
-            soup = BeautifulSoup(response.text, 'html.parser')
+            # 1. ページコンテンツを取得（キャッシュがあれば再利用）
+            soup = self.fetch_page_content(url)
             
-            # すべての画像要素を取得
-            images = []
-            for img in soup.find_all('img'):
-                if img.parent.name != 'picture':
-                    images.append(img)
-                elif not any(i.get('src') == img.get('src') for i in images):
-                    images.append(img)
+            # 2. 画像要素を抽出（キャッシュがあれば再利用）
+            images = self.extract_images(url, soup)
             
+            # 3. 画像を分析
             total_images = len(images) if self.max_images is None else min(len(images), self.max_images)
             logger.info(f"画像要素を {len(images)} 個検出" + (f"（処理上限: {self.max_images}個）" if self.max_images is not None else ""))
             
-            # 各画像をチェック
             for i, img in enumerate(images if self.max_images is None else images[:self.max_images], 1):
                 result = self.check_image(img, url, i, total_images)
                 if result:
@@ -410,10 +768,10 @@ class WCAGImagesOfTextChecker:
                         
             print("-" * 80)
 
-def check_wcag_1_4_5(url: str, config_path: str = 'config.yaml', max_images: int = None):
-    """WCAG 1.4.5チェックを実行"""
+def check_wcag_1_4_5(url: str, config_path: str = 'config.yaml', max_images: int = None, use_cache: bool = True):
+    """WCAG 1.4.5チェックを実行（キャッシュ対応）"""
     logger.info(f"WCAG 1.4.5チェックを開始: {url}")
-    checker = WCAGImagesOfTextChecker(config_path, max_images)
+    checker = WCAGImagesOfTextChecker(config_path, max_images, use_cache)
     checker.check_url(url)
     checker.print_results()
     logger.info("チェックが完了しました")
@@ -424,4 +782,6 @@ if __name__ == "__main__":
         url = sys.argv[1]
         check_wcag_1_4_5(url)
     else:
-        print("使用方法: python checker.py <URL>")
+        print("使用方法: python checker.py <URL> [--no-cache]")
+        print("オプション:")
+        print("  --no-cache: キャッシュを使用しない")
