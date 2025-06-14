@@ -1,3 +1,18 @@
+# WCAG 1.4.5 Images of Text Checker 設定ファイル（サンプル）
+# ==============================================
+#
+# このファイルは設定ファイルのサンプルです。
+# 実際に使用する場合は、このファイルを「config.yaml」にコピーし、
+# OpenAI APIキーを設定してください。
+#
+# 設定項目:
+# - api_key: OpenAI APIキー（https://platform.openai.com/api-keysから取得）
+# - model: 使用するOpenAIのモデル（Vision API対応のモデルが必要）
+#   推奨モデル: gpt-4o, gpt-4o-mini, gpt-4-vision-preview
+#
+# 注意: APIキーは機密情報です。このファイルをバージョン管理システムにコミットする場合は、
+#      APIキーを環境変数から読み込むなどの方法で保護してください。
+
 openai:
   api_key: "your-api-key-here"  # OpenAI APIキーを設定してください
-  model: "gpt-4o-mini"  # Vision対応モデル 
+  model: "gpt-4o-mini"  # Vision対応モデル
